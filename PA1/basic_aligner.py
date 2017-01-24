@@ -7,6 +7,38 @@ from os.path import join
 import time
 from BIOINFO_M260B.helpers import read_reads, read_reference, pretty_print_aligned_reads_with_ref
 
+def process_read_pair(front, back, ref):
+    min_mismatches = len(front) + 1
+    min_mismatch_location = -1
+
+    for i in range(len(ref) - len(front)):
+        mismatches = [1 if front[j] != ref[i + j] else 0 for j in range(len(front))]
+        n_mismatches = sum(mismatches)
+
+        if n_mismatches < min_mismatches:
+            min_mismatches = n_mismatches
+            min_mismatch_location = i
+
+    min_tail_mismatches = len(back) + 1
+    min_tail_location = -1
+
+    for k in range(130,170):
+        endpoint = min_mismatch_location + k
+        if endpoint + len(back) > len(ref):
+            break
+    # for endpoint in range(len(ref) - len(back)):
+        mismatches = [1 if back[j] != ref[endpoint + j] else 0 for j in range(len(back))]
+        n_mismatches = sum(mismatches)
+        
+        # for num in mismatches:
+        #     print(str(num), end='')
+        # print('\t' + str(n_mismatches))
+
+        if n_mismatches < min_tail_mismatches:
+            min_tail_mismatches = n_mismatches
+            min_tail_location = endpoint
+
+    return min_mismatches, min_mismatch_location, min_tail_mismatches, min_tail_location
 
 def trivial_algorithm(paired_end_reads, ref):
     """
@@ -29,50 +61,70 @@ def trivial_algorithm(paired_end_reads, ref):
     output_read_pairs = []
     count = 0
     start = time.clock()
+
+    debug = False
+    matched = 0
+
+    # Main loop through all reads
     for read_pair in paired_end_reads:
         count += 1
         read_alignment_locations = []
         output_read_pair = []
+        found = False
+
+        # Print the remaining time
         if count % 10 == 0:
             time_passed = (time.clock()-start)/60
-            print '{} reads aligned'.format(count), 'in {:.3} minutes'.format(time_passed)
+            print('{} reads aligned'.format(count), 'in {:.3} minutes'.format(time_passed))
             remaining_time = time_passed/count*(len(paired_end_reads)-count)
-            print 'Approximately {:.3} minutes remaining'.format(remaining_time)
-        for read in read_pair:
-            min_mismatches = len(read) + 1
-            min_mismatch_location = -1
-            for i in range(len(ref) - len(read)):
-                mismatches = [1 if read[j] != ref[i + j] else 0 for j in range(len(read))]
-                n_mismatches = sum(mismatches)
-                # The above line should be familiar to Python users, but bears  some explanation for
-                # people who are getting started with it. The "mismatches = ..." line
-                # is called a "list comprehension. Basically, this is a short way of writing the loop:
-                #
-                # n_mismatches = 0
-                # for j in range(len(read)):
-                # if read[j] != ref[i+j]:
-                #         n_mismatches += 1
-                #
-                # The first line creates a list which has a 1 for every mismatch and a 0 for every match.
-                # The second line sums the list created by the first line, which counts the number of mismatches.
-                if n_mismatches < min_mismatches:
-                    min_mismatches = n_mismatches
-                    min_mismatch_location = i
+            print('Approximately {:.3} minutes remaining'.format(remaining_time))
 
-            reversed_read = read[::-1]
-            for i in range(len(ref) - 50):
-                mismatches = [1 if reversed_read[j] != ref[i + j] else 0 for j in range(len(read))]
-                n_mismatches = sum(mismatches)
-                if n_mismatches < min_mismatches:
-                    min_mismatches = n_mismatches
-                    min_mismatch_location = i
-                    read = reversed_read
+        # Look at the read_pair FRONT way
+        front = read_pair[0]
+        back = read_pair[1][::-1]
+
+        min_mismatches, min_mismatch_location, min_tail_mismatches, min_tail_location = process_read_pair(front, back, ref)
+
+        if (min_mismatches + min_tail_mismatches < 10):
+            matched += 1
+            if (debug):
+                print("FRONT WAY")
+                print("front_mismatch: {}  location: {}".format(min_mismatches, min_mismatch_location))
+                print("back_mismatch: {}  distance: {}".format(min_tail_mismatches, min_tail_location))
+
+            # append this match only if threshold is met
             read_alignment_locations.append(min_mismatch_location)
-            output_read_pair.append(read)
-            # # Note that there are some huge potential problems here.
+            output_read_pair.append(front)
+            read_alignment_locations.append(min_tail_location)
+            output_read_pair.append(back)
+            found = True
+        
+        # if front way didn't find a satisfactory match:
+        # else: 
+        #     # Look at read_pair the BACK way
+        #     front = read_pair[1]
+        #     back = read_pair[0][::-1]
 
-        all_read_alignment_locations.append(read_alignment_locations)
-        output_read_pairs.append(output_read_pair)
+        #     min_mismatches, min_mismatch_location, min_tail_mismatches, min_tail_location = process_read_pair(front, back, ref)
+
+        #     if (min_mismatches + min_tail_mismatches < 10):
+        #         matched += 1
+        #         if (debug):
+        #             print("BACK WAY")
+        #             print("front_mismatch: {}  location: {}".format(min_mismatches, min_mismatch_location))
+        #             print("back_mismatch: {}  distance: {}".format(min_tail_mismatches, min_tail_location))
+                
+        #         read_alignment_locations.append(min_mismatch_location)
+        #         output_read_pair.append(front)
+        #         read_alignment_locations.append(min_tail_location)
+        #         output_read_pair.append(back)
+        
+        if (found):
+            all_read_alignment_locations.append(read_alignment_locations)
+            output_read_pairs.append(output_read_pair)
+
+    # after main loop
+    print('Matched {} reads'.format(matched))
     return all_read_alignment_locations, output_read_pairs
 
 
@@ -83,6 +135,7 @@ if __name__ == "__main__":
     reads_fn = join(input_folder, 'reads_{}.txt'.format(f_base))
     start = time.clock()
     input_reads = read_reads(reads_fn)
+    
     # This will take a while; you can use an array slice for example:
     #
     #   input_reads = reads[:300]
@@ -92,9 +145,13 @@ if __name__ == "__main__":
     reference_fn = join(input_folder, 'ref_{}.txt'.format(f_base))
     reference = read_reference(reference_fn)
     alignments, reads = trivial_algorithm(input_reads, reference)
-    print alignments
-    print reads
+
+    # print(alignments)
+    # print(reads)
+
+    # Final outputs
     output_str = pretty_print_aligned_reads_with_ref(reads, alignments, reference)
     output_fn = join(input_folder, 'aligned_{}.txt'.format(f_base))
+    print("saving to " + output_fn)
     with(open(output_fn, 'w')) as output_file:
         output_file.write(output_str)
